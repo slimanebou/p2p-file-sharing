@@ -1,0 +1,4 @@
+{
+  "notes-reseau.txt": {"desc": "Notes de cours réseau : adressage IPv4 et routage", "author": "Carol"},
+  "image.bin": {"desc": "Fichier binaire de 2 Mo pour tester les gros transferts", "author": "Carol"}
+}

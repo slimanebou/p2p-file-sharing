@@ -1,0 +1,1 @@
+UDP : protocole sans connexion, sans garantie de livraison ni d'ordre.

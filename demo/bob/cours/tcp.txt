@@ -1,0 +1,1 @@
+TCP : protocole fiable, oriente connexion. Poignee de main : SYN, SYN-ACK, ACK.

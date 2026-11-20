@@ -31,3 +31,9 @@ class CentralClient:
         self.token = self._call({"type": "LOGIN", "user": user, "proof": proof})["token"]
         self.user = user
         return self.token
+
+    def publish(self, host: str, port: int, files: list) -> int:
+        """Annonce au central l'adresse du serveur de fichiers et la liste des fichiers partagés."""
+        reply = self._call({"type": "PUBLISH", "token": self.token,
+                            "host": host, "port": port, "files": files})
+        return reply["count"]

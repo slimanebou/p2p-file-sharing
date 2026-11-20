@@ -1,0 +1,1 @@
+FAQ MPEG-2 : le codage audio utilise un codage perceptuel par sous-bandes (couches I, II et III, cette derniere etant le MP3).

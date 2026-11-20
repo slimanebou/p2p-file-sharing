@@ -1,0 +1,5 @@
+{
+  "cours/tcp.txt": {"desc": "Cours sur le protocole TCP et la poignée de main", "author": "Bob"},
+  "cours/udp.txt": {"desc": "Cours sur le protocole UDP", "author": "Bob"},
+  "musique/playlist.txt": {"desc": "Playlist de musique au format MP3", "author": "Bob"}
+}

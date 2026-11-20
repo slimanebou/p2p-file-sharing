@@ -107,11 +107,52 @@ def handle_login(state, msg, client):
     return {"ok": True, "token": token}
 
 
+MAX_FILES = 10_000
+FILE_FIELDS = {"name": str, "desc": str, "author": str, "date": str, "size": int, "sha256": str}
+
+
+def clean_files(files):
+    """Vérifie la liste envoyée par l'hôte ; ValueError si elle est mal formée."""
+    if not isinstance(files, list) or len(files) > MAX_FILES:
+        raise ValueError("files doit être une liste")
+    out = []
+    for f in files:
+        if not isinstance(f, dict):
+            raise ValueError("fichier mal formé")
+        entry = {}
+        for field, typ in FILE_FIELDS.items():
+            value = f.get(field, "" if typ is str else 0)
+            if not isinstance(value, typ):
+                raise ValueError(f"champ {field} invalide")
+            entry[field] = value
+        if not entry["name"]:
+            raise ValueError("nom de fichier vide")
+        out.append(entry)
+    return out
+
+
+def handle_publish(state, msg, client):
+    files = clean_files(msg["files"])
+    port = int(msg["port"])
+    # Adresse annoncée par l'hôte, sinon celle d'où vient la connexion.
+    host = msg.get("host") or client.rsplit(":", 1)[0]
+    with state.lock:
+        user = require_session(state, msg)
+        if user is None:
+            return {"ok": False, "error": "bad_token"}
+        state.peers[user] = {"host": host, "port": port, "files": files,
+                             "last_seen": time.monotonic()}
+    log.info("%s : %s publie %d fichier(s), serveur de fichiers %s:%d",
+             client, user, len(files), host, port)
+    return {"ok": True, "count": len(files)}
+
+
 HANDLERS = {
     "PING": handle_ping,
     "REGISTER": handle_register,
     "CHALLENGE": handle_challenge,
     "LOGIN": handle_login,
+    "PUBLISH": handle_publish,
 }
 
 def dispatch(state, msg, client):
