@@ -37,3 +37,8 @@ class CentralClient:
         reply = self._call({"type": "PUBLISH", "token": self.token,
                             "host": host, "port": port, "files": files})
         return reply["count"]
+
+    def search(self, keyword: str, sort: str = "relevance") -> list:
+        """Demande au central les fichiers qui correspondent au mot-clé, triés."""
+        return self._call({"type": "SEARCH", "token": self.token,
+                           "keyword": keyword, "sort": sort})["items"]

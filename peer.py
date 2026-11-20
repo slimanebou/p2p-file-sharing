@@ -9,7 +9,7 @@ import argparse
 import getpass
 import socket
 import sys
-import time
+from p2p.client import Shell
 
 from p2p.central_client import CentralClient, CentralError
 from p2p.shared import scan_shared
@@ -55,12 +55,11 @@ def main():
     print(f"{count} fichier(s) publié(s) depuis {args.shared} :")
     for f in files:
         print(f"  - {f['name']:<30} {f['size']:>9} o  {f['desc']}")
-    print("Ctrl+C pour quitter.")
     try:
-        while True:
-            time.sleep(1)
+        Shell(central).cmdloop()
     except KeyboardInterrupt:
-        print("\nArrêt.")
+        pass
+    print("Arrêt.")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ import socketserver
 import threading
 import time
 
-from p2p import auth
+from p2p import auth, index
 from p2p.protocol import Connection, ProtocolError
 
 log = logging.getLogger("central")
@@ -147,12 +147,33 @@ def handle_publish(state, msg, client):
     return {"ok": True, "count": len(files)}
 
 
+MAX_RESULTS = 200
+
+
+def handle_search(state, msg, client):
+    keyword, sort = msg["keyword"], msg.get("sort", "relevance")
+    if not isinstance(keyword, str) or not keyword.strip() or len(keyword) > 100:
+        return {"ok": False, "error": "bad_keyword"}
+    if sort not in index.SORT_KEYS:
+        return {"ok": False, "error": "bad_sort"}
+    with state.lock:
+        user = require_session(state, msg)
+        if user is None:
+            return {"ok": False, "error": "bad_token"}
+        items = index.search(state.peers, keyword, exclude_user=user)
+    # le tri se fait hors du verrou : les autres threads n'attendent pas
+    items = index.sort_items(items, sort)[:MAX_RESULTS]
+    log.info("%s : %s cherche « %s » -> %d résultat(s)", client, user, keyword, len(items))
+    return {"ok": True, "items": items}
+
+
 HANDLERS = {
     "PING": handle_ping,
     "REGISTER": handle_register,
     "CHALLENGE": handle_challenge,
     "LOGIN": handle_login,
     "PUBLISH": handle_publish,
+    "SEARCH": handle_search,
 }
 
 def dispatch(state, msg, client):
