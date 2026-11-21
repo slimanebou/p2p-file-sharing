@@ -9,10 +9,12 @@ import argparse
 import getpass
 import socket
 import sys
+import logging
 from p2p.client import Shell
 
 from p2p.central_client import CentralClient, CentralError
 from p2p.shared import scan_shared
+from p2p.file_server import FileServer
 
 
 def parse_args():
@@ -42,21 +44,34 @@ def authenticate(central: CentralClient, register: bool) -> None:
 
 def main():
     args = parse_args()
+    logging.basicConfig(level=logging.INFO, format="  [serveur] %(message)s")
+    try:
+        files = scan_shared(args.shared)
+    except FileNotFoundError as e:
+        sys.exit(str(e))
+
+    # Le serveur de fichiers démarre AVANT la publication : l'adresse annoncée doit répondre.
+    try:
+        file_server = FileServer(("0.0.0.0", args.port), args.shared, files)
+    except OSError as e:
+        sys.exit(f"Impossible d'écouter sur le port {args.port} : {e}")
+    file_server.start()
+
     central = CentralClient(args.central_host, args.central_port)
     try:
         authenticate(central, args.register)
-        files = scan_shared(args.shared)
         count = central.publish(args.host, args.port, files)
     except CentralError as e:
         sys.exit(f"Refusé par le central : {e}")
     except (ConnectionError, socket.timeout, OSError) as e:
         sys.exit(f"Central injoignable ({args.central_host}:{args.central_port}) : {e}")
 
+    print(f"Serveur de fichiers à l'écoute sur le port {args.port}.")
     print(f"{count} fichier(s) publié(s) depuis {args.shared} :")
     for f in files:
         print(f"  - {f['name']:<30} {f['size']:>9} o  {f['desc']}")
     try:
-        Shell(central).cmdloop()
+        Shell(central, args.shared, file_server).cmdloop()
     except KeyboardInterrupt:
         pass
     print("Arrêt.")

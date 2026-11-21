@@ -1,9 +1,59 @@
-"""Client interactif d'un hôte : recherche, tri, (téléchargement en P6)."""
+"""Client interactif d'un hôte : recherche, tri, téléchargement."""
 import cmd
+import os
+from pathlib import Path
 
 from p2p.central_client import CentralError
 from p2p.index import SORT_KEYS, sort_items
+from p2p.protocol import ProtocolError, connect
 
+
+class DownloadError(Exception):
+    pass
+
+
+def download(item: dict, shared_dir, progress=None) -> Path:
+    """Télécharge un fichier depuis l'hôte qui le partage, dans le dossier partagé local.
+
+    Écrit d'abord dans un .part, vérifie le SHA-256, puis renomme : un fichier
+    incomplet ou corrompu n'apparaît jamais sous son vrai nom.
+    """
+    root = Path(shared_dir).resolve()
+    dest = (root / item["name"]).resolve()
+    if not dest.is_relative_to(root):                       # nom piégé renvoyé par le central
+        raise DownloadError("nom de fichier refusé")
+    if dest.exists():
+        raise DownloadError(f"{item['name']} existe déjà dans {shared_dir}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+
+    conn = connect(item["host"], item["port"], timeout=30)
+    try:
+        conn.send_msg({"type": "GET", "name": item["name"]})
+        head = conn.recv_msg()
+        if head is None or not head.get("ok"):
+            raise DownloadError((head or {}).get("error", "pas de réponse"))
+        digest = conn.recv_file(part, int(head["size"]), progress)
+    except (ProtocolError, OSError) as e:
+        part.unlink(missing_ok=True)
+        raise DownloadError(f"transfert interrompu : {e}") from None
+    finally:
+        conn.close()
+
+    if digest != item["sha256"]:                            # comparé à l'empreinte publiée
+        part.unlink(missing_ok=True)
+        raise DownloadError("empreinte SHA-256 différente : fichier rejeté")
+    os.replace(part, dest)
+    return dest
+
+
+def progress_bar(done: int, total: int) -> None:
+    pct = done * 100 // total if total else 100
+    if pct == getattr(progress_bar, "last", None) and done < total:
+        return                                   # n'affiche que si le pourcentage change
+    progress_bar.last = pct
+    bar = "#" * (pct // 4)
+    print(f"\r  [{bar:<25}] {pct:3d} %  {human_size(done):<10}", end="", flush=True)
 
 def human_size(n: int) -> str:
     for unit in ("o", "Ko", "Mo", "Go"):
@@ -15,9 +65,11 @@ def human_size(n: int) -> str:
 class Shell(cmd.Cmd):
     intro = "Tape « help » pour la liste des commandes."
 
-    def __init__(self, central):
+    def __init__(self, central, shared_dir, file_server):
         super().__init__()
         self.central = central
+        self.shared_dir = shared_dir
+        self.file_server = file_server
         self.prompt = f"p2p:{central.user}> "
         self.results = []          # derniers résultats, numérotés à l'affichage
 
@@ -59,6 +111,23 @@ class Shell(cmd.Cmd):
             print(f"Critères possibles : {', '.join(SORT_KEYS)}")
             return
         self.show()
+
+    def do_get(self, arg):
+        """get <n°> : télécharge le fichier n° des derniers résultats depuis l'hôte qui le partage."""
+        try:
+            item = self.results[int(arg) - 1]
+            if int(arg) < 1:
+                raise IndexError
+        except (ValueError, IndexError):
+            print("Usage : get <n°>  (numéro affiché par search)")
+            return
+        print(f"Téléchargement de {item['name']} depuis {item['user']}@{item['host']}:{item['port']}")
+        try:
+            path = download(item, self.shared_dir, progress_bar)
+        except (DownloadError, OSError) as e:     # OSError : hôte injoignable, refusé, timeout
+            print(f"\nÉchec : {e}")
+            return
+        print(f"\nOK : {path} (SHA-256 vérifié)")
 
     def do_list(self, arg):
         """list : réaffiche les derniers résultats."""

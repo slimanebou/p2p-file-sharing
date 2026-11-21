@@ -217,7 +217,9 @@ class Handler(socketserver.BaseRequestHandler):
 
 
 class CentralServer(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True   # relancer tout de suite sans « address already in use »
+    # Linux : relancer tout de suite sans « address already in use ».
+    # Windows : SO_REUSEADDR laisserait deux programmes écouter sur le même port, on le désactive.
+    allow_reuse_address = os.name != "nt"
     daemon_threads = True        # Ctrl+C ne reste pas bloqué par les threads clients
 
     def __init__(self, addr, users_path="users.json"):
