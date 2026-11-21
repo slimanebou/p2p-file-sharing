@@ -6,6 +6,7 @@ from pathlib import Path
 from p2p.central_client import CentralError
 from p2p.index import SORT_KEYS, sort_items
 from p2p.protocol import ProtocolError, connect
+from p2p.shared import file_entry, load_descriptions, save_descriptions
 
 
 class DownloadError(Exception):
@@ -46,6 +47,22 @@ def download(item: dict, shared_dir, progress=None) -> Path:
     os.replace(part, dest)
     return dest
 
+def share_downloaded(item: dict, shared_dir, file_server, central) -> dict:
+    """Rend un fichier téléchargé disponible aux autres (exigence du sujet).
+
+    1. sa description est ajoutée au descriptions.json local ;
+    2. le serveur de fichiers local accepte désormais de le servir ;
+    3. le central est prévenu par un UPDATE.
+    """
+    meta = {"desc": item["desc"], "author": item.get("author", ""), "date": item["date"]}
+    descriptions = load_descriptions(shared_dir)
+    descriptions[item["name"]] = meta
+    save_descriptions(shared_dir, descriptions)
+
+    entry = file_entry(shared_dir, item["name"], meta)
+    file_server.add_file(entry)
+    central.update([entry])
+    return entry
 
 def progress_bar(done: int, total: int) -> None:
     pct = done * 100 // total if total else 100
@@ -128,6 +145,12 @@ class Shell(cmd.Cmd):
             print(f"\nÉchec : {e}")
             return
         print(f"\nOK : {path} (SHA-256 vérifié)")
+        
+        try:
+            share_downloaded(item, self.shared_dir, self.file_server, self.central)
+            print("Fichier ajouté à tes partages et liste mise à jour auprès du central.")
+        except (CentralError, OSError) as e:
+            print(f"Téléchargé, mais mise à jour du central impossible : {e}")
 
     def do_list(self, arg):
         """list : réaffiche les derniers résultats."""

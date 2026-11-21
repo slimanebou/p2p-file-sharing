@@ -147,6 +147,27 @@ def handle_publish(state, msg, client):
     return {"ok": True, "count": len(files)}
 
 
+def handle_update(state, msg, client):
+    files = clean_files(msg["files"])
+    with state.lock:
+        user = require_session(state, msg)
+        if user is None:
+            return {"ok": False, "error": "bad_token"}
+        peer = state.peers.get(user)
+        if peer is None:                               # il faut avoir publié avant
+            return {"ok": False, "error": "not_published"}
+        by_name = {f["name"]: f for f in peer["files"]}
+        for f in files:
+            by_name[f["name"]] = f                     # ajout, ou remplacement si même nom
+        if len(by_name) > MAX_FILES:
+            return {"ok": False, "error": "too_many_files"}
+        peer["files"] = list(by_name.values())
+        peer["last_seen"] = time.monotonic()
+        total = len(peer["files"])
+    log.info("%s : %s ajoute %s -> %d fichier(s) partagé(s)",
+             client, user, ", ".join(f["name"] for f in files), total)
+    return {"ok": True, "count": total}
+
 MAX_RESULTS = 200
 
 
@@ -174,6 +195,7 @@ HANDLERS = {
     "LOGIN": handle_login,
     "PUBLISH": handle_publish,
     "SEARCH": handle_search,
+    "UPDATE": handle_update,
 }
 
 def dispatch(state, msg, client):

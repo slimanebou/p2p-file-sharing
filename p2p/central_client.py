@@ -42,3 +42,7 @@ class CentralClient:
         """Demande au central les fichiers qui correspondent au mot-clé, triés."""
         return self._call({"type": "SEARCH", "token": self.token,
                            "keyword": keyword, "sort": sort})["items"]
+    
+    def update(self, files: list) -> int:
+        """Ajoute des fichiers (ou met à jour leur description) dans la liste publiée."""
+        return self._call({"type": "UPDATE", "token": self.token, "files": files})["count"]
