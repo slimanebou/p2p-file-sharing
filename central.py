@@ -316,6 +316,7 @@ def main():
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s",
                         datefmt="%H:%M:%S")
     with CentralServer((args.host, args.port), args.users) as srv:
         log.info("serveur central à l'écoute sur %s:%d", args.host, args.port)
