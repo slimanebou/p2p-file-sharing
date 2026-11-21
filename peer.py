@@ -44,7 +44,8 @@ def authenticate(central: CentralClient, register: bool) -> None:
 
 def main():
     args = parse_args()
-    logging.basicConfig(level=logging.INFO, format="  [serveur] %(message)s")
+    logging.basicConfig(level=logging.INFO, format="  [%(name)s] %(message)s")
+    
     try:
         files = scan_shared(args.shared)
     except FileNotFoundError as e:
@@ -70,11 +71,23 @@ def main():
     print(f"{count} fichier(s) publié(s) depuis {args.shared} :")
     for f in files:
         print(f"  - {f['name']:<30} {f['size']:>9} o  {f['desc']}")
+    central.start_heartbeat(lambda: list(file_server.files.values()))
     try:
         Shell(central, args.shared, file_server).cmdloop()
     except KeyboardInterrupt:
         pass
-    print("Arrêt.")
+    
+    finally:
+        # Déconnexion annoncée : le central retire nos fichiers tout de suite.
+        try:
+            central.logout()
+            print("Déconnecté du central.")
+        except CentralError as e:
+            print(f"Déconnexion refusée par le central ({e}).")
+        except OSError:
+            print("Central injoignable : il nous retirera seul après 30 s sans heartbeat.")
+        file_server.shutdown()
+        print("Arrêt.")
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ log = logging.getLogger("central")
 
 
 CHALLENGE_TTL = 30   # secondes de validité d'un nonce
+PEER_TIMEOUT = 30    # un hôte sans nouvelles depuis 30 s est considéré comme parti
+REAP_INTERVAL = 5    # le « reaper » vérifie toutes les 5 s
 
 
 class UserStore:
@@ -46,7 +48,7 @@ class State:
         self.users = UserStore(users_path)
         self.challenges = {}           # user -> (nonce, date d'émission)
         self.sessions = {}             # token -> user
-        self.peers = {}                # user -> {host, port, files, last_seen}  (P4)
+        self.peers = {}                # user -> {host, port, files, last_seen}
 
 
 def require_session(state, msg):
@@ -56,7 +58,6 @@ def require_session(state, msg):
 
 # ---------- gestionnaires de messages ----------
 # Chaque gestionnaire reçoit (state, msg, client) et renvoie le dict de réponse.
-# Les phases suivantes ajoutent les leurs dans HANDLERS.
 
 def handle_ping(state, msg, client):
     return {"ok": True, "type": "PONG"}
@@ -168,6 +169,47 @@ def handle_update(state, msg, client):
              client, user, ", ".join(f["name"] for f in files), total)
     return {"ok": True, "count": total}
 
+
+def handle_heartbeat(state, msg, client):
+    with state.lock:
+        user = require_session(state, msg)
+        if user is None:
+            return {"ok": False, "error": "bad_token"}
+        peer = state.peers.get(user)
+        if peer is None:            # retiré par le reaper (réseau coupé trop longtemps)
+            return {"ok": False, "error": "not_published"}
+        peer["last_seen"] = time.monotonic()
+    return {"ok": True}
+
+
+def handle_logout(state, msg, client):
+    with state.lock:
+        user = require_session(state, msg)
+        if user is None:
+            return {"ok": False, "error": "bad_token"}
+        del state.sessions[msg["token"]]
+        peer = state.peers.pop(user, None)          # ses fichiers sortent des recherches
+    log.info("%s : %s se déconnecte (%d fichier(s) retiré(s))",
+             client, user, len(peer["files"]) if peer else 0)
+    return {"ok": True}
+
+
+def reap(state, timeout=PEER_TIMEOUT):
+    """Retire les hôtes muets depuis plus de `timeout` secondes. Renvoie leurs noms."""
+    now = time.monotonic()
+    with state.lock:
+        gone = [u for u, p in state.peers.items() if now - p["last_seen"] > timeout]
+        for user in gone:
+            del state.peers[user]
+        # au passage, on oublie les nonces expirés
+        for user in [u for u, (_, t) in state.challenges.items() if now - t > CHALLENGE_TTL]:
+            del state.challenges[user]
+    for user in gone:
+        log.warning("%s ne donne plus signe de vie depuis %d s : ses fichiers sont retirés",
+                    user, timeout)
+    return gone
+
+
 MAX_RESULTS = 200
 
 
@@ -196,7 +238,10 @@ HANDLERS = {
     "PUBLISH": handle_publish,
     "SEARCH": handle_search,
     "UPDATE": handle_update,
+    "HEARTBEAT": handle_heartbeat,
+    "LOGOUT": handle_logout,
 }
+
 
 def dispatch(state, msg, client):
     handler = HANDLERS.get(msg.get("type"))
@@ -216,7 +261,7 @@ class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         client = f"{self.client_address[0]}:{self.client_address[1]}"
         conn = Connection(self.request)
-        log.info("%s connecté", client)
+        log.debug("%s connecté", client)
         try:
             while True:                       # plusieurs messages possibles par connexion
                 msg = conn.recv_msg()
@@ -235,7 +280,7 @@ class Handler(socketserver.BaseRequestHandler):
         except OSError as e:                  # connexion coupée brutalement
             log.warning("%s : connexion perdue (%s)", client, e)
         finally:
-            log.info("%s déconnecté", client)
+            log.debug("%s déconnecté", client)
 
 
 class CentralServer(socketserver.ThreadingTCPServer):
@@ -244,9 +289,22 @@ class CentralServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = os.name != "nt"
     daemon_threads = True        # Ctrl+C ne reste pas bloqué par les threads clients
 
-    def __init__(self, addr, users_path="users.json"):
+    def __init__(self, addr, users_path="users.json",
+                 peer_timeout=PEER_TIMEOUT, reap_interval=REAP_INTERVAL):
         super().__init__(addr, Handler)
         self.state = State(users_path)
+        self.peer_timeout = peer_timeout
+        self._stop = threading.Event()
+        # Thread « reaper » : retire régulièrement les hôtes qui n'envoient plus de heartbeat.
+        threading.Thread(target=self._reaper, args=(reap_interval,), daemon=True).start()
+
+    def _reaper(self, interval):
+        while not self._stop.wait(interval):     # wait() renvoie True quand on demande l'arrêt
+            reap(self.state, self.peer_timeout)
+
+    def server_close(self):
+        self._stop.set()
+        super().server_close()
 
 
 def main():
@@ -254,9 +312,10 @@ def main():
     ap.add_argument("--host", default="0.0.0.0", help="adresse d'écoute (défaut : toutes)")
     ap.add_argument("--port", type=int, default=5000, help="port d'écoute (défaut : 5000)")
     ap.add_argument("--users", default="users.json", help="fichier des utilisateurs")
+    ap.add_argument("-v", "--verbose", action="store_true", help="affiche aussi chaque connexion TCP")
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         datefmt="%H:%M:%S")
     with CentralServer((args.host, args.port), args.users) as srv:
         log.info("serveur central à l'écoute sur %s:%d", args.host, args.port)
